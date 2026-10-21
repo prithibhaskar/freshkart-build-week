@@ -1,6 +1,8 @@
 """Quick test for Exercise 1: PII shield."""
 import sys
 sys.stdout.reconfigure(line_buffering=True)
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root, so `import bot` works
 
 print("=== Exercise 1 Test ===")
 print("Loading bot module...")

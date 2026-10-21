@@ -26,7 +26,7 @@ def get_llm(model=None):
 # The main model retries up to 3 times (handles transient timeouts / 500s).
 # If it still fails, a backup model is tried.  If that also fails, a final
 # RunnableLambda fallback returns a safe default so the pipeline never crashes.
-BACKUP_MODEL = os.getenv("BACKUP_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
+BACKUP_MODEL = os.getenv("BACKUP_MODEL", "meta-llama/llama-3.1-8b-instruct")
 FALLBACK_REPLY = "Sorry, we're facing a technical issue. A FreshKart agent will contact you shortly."
 
 def read(name):
@@ -37,7 +37,7 @@ def read(name):
 # Every chain downstream of llm inherits the switch automatically.
 MODELS = {
     "mini": "openai/gpt-4o-mini",
-    "llama": "meta-llama/llama-3.1-8b-instruct:free",
+    "llama": "meta-llama/llama-3.1-8b-instruct",
 }
 llm = get_llm().configurable_alternatives(
     ConfigurableField(id="model"),

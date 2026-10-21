@@ -1,6 +1,8 @@
 """Quick test for Exercise 2: Language-aware reply."""
 import sys
 sys.stdout.reconfigure(line_buffering=True)
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root, so `import bot` works
 
 print("=== Exercise 2 Test ===")
 print("Loading bot module...")
