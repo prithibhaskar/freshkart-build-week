@@ -4,7 +4,7 @@ sys.stdout.reconfigure(line_buffering=True)
 
 print("=== Exercise 7 Test ===")
 print("Loading bot module...")
-from bot import router, tracked_router, TICKETS, TRACKER_NAMES, PipelineTracker
+from bot import router, tracked_router, TICKETS, TRACKER_NAMES
 
 print(f"Tracked station names: {sorted(TRACKER_NAMES)}")
 print("Module loaded OK\n")

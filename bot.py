@@ -1,6 +1,5 @@
 """FreshKart support bot: the notebook (freshkart_lcel.ipynb) moved into a .py file."""
-import os, re, sys, threading
-from datetime import datetime as _dt
+import os, re, sys
 from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
@@ -10,6 +9,7 @@ from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough, RunnableParallel, RunnableBranch, ConfigurableField
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.tracers.run_collector import RunCollectorCallbackHandler
 
 # Cell 2: Setup (data paths are relative to this file)
 load_dotenv()
@@ -19,7 +19,8 @@ def get_llm(model=None):
     return ChatOpenAI(model=model or os.getenv("MODEL", "openai/gpt-4o-mini"),
                       base_url="https://openrouter.ai/api/v1",
                       api_key=os.getenv("OPENROUTER_API_KEY"), temperature=0,
-                      max_retries=0)   # Ex 3: disable built-in retries so our .with_retry() is visible
+                      max_retries=0    # Ex 3: disable built-in retries so our .with_retry() is visible
+                      ).with_config(run_name="llm")   # Ex 6: a RunnableBinding, so configurable_alternatives works on any model
 
 # Ex 3: Never-down intent – .with_retry() + .with_fallbacks() on the LLM.
 # The main model retries up to 3 times (handles transient timeouts / 500s).
@@ -114,7 +115,7 @@ def mask_step(x):
 
 # Cell 14: RunnablePassthrough.assign + memory (look back through chat_history)
 def order_id_from(x):
-    for text in [x["_raw_input"]] + [m.content for m in reversed(x.get("chat_history", []))]:
+    for text in [x.get("_raw_input") or x["input"]] + [m.content for m in reversed(x.get("chat_history", []))]:
         if find_order_id(text): return find_order_id(text)
 
 # Cell 16: RunnableParallel (all signals at once; only intent calls the LLM)
@@ -384,53 +385,29 @@ def bulk_triage(messages, max_concurrency=5):
                          "reasons": "; ".join(res["reasons"])})
     return rows
 
-# Ex 7: Live pipeline tracker – a BaseCallbackHandler passed via config captures timings
-# from ALL nested stations (including those inside RunnableParallel).
-# Design choice: CallbackHandler over astream_events because it's synchronous, works with
-# router.invoke(), and propagates to all children automatically.
-# IMPORTANT: Callbacks inside RunnableParallel fire on worker threads – never call st.* from them.
-# Instead, append to a thread-safe list and let app.py display it afterward.
-from langchain_core.callbacks import BaseCallbackHandler
-
+# Ex 7: Live pipeline tracker – callbacks passed via config. LangChain's built-in
+# RunCollectorCallbackHandler records the whole run tree (every nested station, including
+# those inside RunnableParallel) with start/end times, keyed by run_name.
+# Synchronous, so it works with router.invoke() and needs no event loop.
+# app.py displays the events afterward; nothing here touches st.*.
 TRACKER_NAMES = {"pii_mask", "find_order_id", "signals_parallel", "intent", "order_lookup",
                  "customer_lookup", "inventory_check", "rider_lookup", "safety_keywords",
                  "claimed_amount", "unpack_signals", "decide_route"}
 
-class PipelineTracker(BaseCallbackHandler):
-    """Collects (name, start, end) for every named station in the router pipeline."""
-    def __init__(self):
-        self.events = []
-        self._runs = {}          # run_id -> {"name": ..., "start": ...}
-        self._lock = threading.Lock()
-
-    def on_chain_start(self, serialized, inputs, *, run_id, name=None, **kwargs):
-        if name and name in TRACKER_NAMES:
-            with self._lock:
-                self._runs[run_id] = {"name": name, "start": _dt.utcnow()}
-
-    def on_chain_end(self, outputs, *, run_id, **kwargs):
-        with self._lock:
-            if run_id in self._runs:
-                entry = self._runs.pop(run_id)
-                entry["end"] = _dt.utcnow()
-                self.events.append(entry)
-
-    # Also capture tool/retriever-like runnables that fire as "chain" events
-    def on_chain_error(self, error, *, run_id, **kwargs):
-        with self._lock:
-            if run_id in self._runs:
-                entry = self._runs.pop(run_id)
-                entry["end"] = _dt.utcnow()
-                self.events.append(entry)
+def _station_events(run):
+    events = [{"name": run.name, "start": run.start_time, "end": run.end_time}] if run.name in TRACKER_NAMES else []
+    for child in run.child_runs:
+        events += _station_events(child)
+    return events
 
 def tracked_router(inputs, config=None):
     """Like router.invoke(), but also returns a list of timing events.
     The tracker is optional – router.invoke() still works without it."""
-    tracker = PipelineTracker()
+    collector = RunCollectorCallbackHandler()
     cfg = dict(config or {})
-    cfg.setdefault("callbacks", []).append(tracker)
+    cfg["callbacks"] = list(cfg.get("callbacks") or []) + [collector]
     result = router.invoke(inputs, config=cfg)
-    return result, tracker.events
+    return result, [e for run in collector.traced_runs for e in _station_events(run)]
 
 store = {}
 def get_history(session_id):

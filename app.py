@@ -83,12 +83,12 @@ with tab_chat:
                         extra = ""
                         if ev["name"] == "decide_route":
                             extra = f"  → {decision['route']} ({decision['reasons'][0]})"
-                        pipeline_status.write(f"✓ `{ev['name']}`  {secs:.2f}s{extra}")
+                        pipeline_status.text(f"✓ {ev['name']:18s} {secs:.2f}s{extra}")
                     t_min = min(e["start"] for e in events)
                     t_max = max(e["end"] for e in events)
                     wall = (t_max - t_min).total_seconds()
                     parts_sum = sum((e["end"] - e["start"]).total_seconds() for e in events)
-                    pipeline_status.write(f"Wall: {wall:.2f}s | Sum: {parts_sum:.2f}s (parallel!)")
+                    pipeline_status.text(f"Wall: {wall:.2f}s | Sum: {parts_sum:.2f}s (parallel!)")
                 pipeline_status.update(label="Pipeline complete ✓", state="complete", expanded=False)
             # Ex 4: reply_chain now streams {"reply": str_chunk, "card": dict|None} chunks.
             # Display reply tokens live; capture card when it arrives.
