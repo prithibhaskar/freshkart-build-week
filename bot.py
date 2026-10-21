@@ -64,9 +64,32 @@ def claimed_amount(text):
     nums = re.findall(r"(?i)(?:₹|Rs\.?|INR)\s?(\d[\d,]*(?:\.\d+)?)", text)
     return max(float(n.replace(",", "")) for n in nums) if nums else None
 
+# Ex 1: PII shield – RunnableLambda masks phone/email/UPI/card before any LLM sees the text.
+# Order: card → email → UPI → phone (email before UPI so user@gmail.com isn't partially matched as UPI).
+_PII_PATTERNS = [
+    (r"\b\d{12,16}\b",                              "[CARD]"),
+    (r"\b[\w.+-]+@[\w-]+\.[\w.]+\b",                "[EMAIL]"),
+    (r"\b[\w.]+@[a-z]{2,}\b",                       "[UPI]"),
+    (r"\b\d{5}\s?\d{5}\b",                           "[PHONE]"),
+]
+
+def mask_pii(text):
+    """Replace PII tokens in text. Returns (masked_text, count_of_replacements)."""
+    count = 0
+    for pattern, placeholder in _PII_PATTERNS:
+        found = re.findall(pattern, text)
+        count += len(found)
+        text = re.sub(pattern, placeholder, text)
+    return text, count
+
+def mask_step(x):
+    """Single RunnableLambda: masks input, stashes original in _raw_input for regex signals."""
+    masked, count = mask_pii(x["input"])
+    return {**x, "_raw_input": x["input"], "input": masked, "pii_masked_count": count}
+
 # Cell 14: RunnablePassthrough.assign + memory (look back through chat_history)
 def order_id_from(x):
-    for text in [x["input"]] + [m.content for m in reversed(x.get("chat_history", []))]:
+    for text in [x["_raw_input"]] + [m.content for m in reversed(x.get("chat_history", []))]:
         if find_order_id(text): return find_order_id(text)
 
 # Cell 16: RunnableParallel (all signals at once; only intent calls the LLM)
@@ -97,8 +120,8 @@ oid = lambda f: RunnableLambda(lambda x: f(x["order_id"]))
 signals = RunnableParallel(
     intent=intent_prompt | llm | StrOutputParser() | RunnableLambda(parse_intent),
     order=oid(get_order), customer=oid(get_customer), inventory=oid(check_inventory), rider=oid(get_rider),
-    safety=RunnableLambda(lambda x: has_safety(x["input"])),
-    claimed_amount=RunnableLambda(lambda x: claimed_amount(x["input"])),
+    safety=RunnableLambda(lambda x: has_safety(x["_raw_input"])),           # Ex 1: regex reads unmasked original
+    claimed_amount=RunnableLambda(lambda x: claimed_amount(x["_raw_input"])),  # Ex 1: regex reads unmasked original
 )
 
 # Cell 18: decide_route (rules in plain Python, first match wins)
@@ -170,7 +193,9 @@ branch = RunnableBranch(
 )
 
 # Cell 22: full chain + memory. The app uses router (decide) then reply_chain (stream) to avoid a 2nd intent call.
-router = (RunnablePassthrough.assign(order_id=RunnableLambda(order_id_from))
+# Ex 1: mask_step is the first station – overwrites input with masked text, stashes original in _raw_input.
+router = (RunnableLambda(mask_step)
+          | RunnablePassthrough.assign(order_id=RunnableLambda(order_id_from))
           | RunnablePassthrough.assign(signals=signals) | RunnableLambda(decide_route))
 reply_chain = RunnableLambda(add_note) | branch
 full_chain = router | reply_chain

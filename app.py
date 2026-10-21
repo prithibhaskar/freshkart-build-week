@@ -25,6 +25,8 @@ def why(m):
     with st.expander("Why this answer?"):
         st.markdown(f"Route: :{COLORS[m['route']]}[**{m['route']}**]")
         st.markdown("Reasons: " + "; ".join(m["reasons"]))
+        if m.get("pii_masked_count"):                                      # Ex 1: stretch – PII badge
+            st.markdown(f"🛡️ PII masked: **{m['pii_masked_count']}** item(s)")
         st.json(m["signals"])
 
 # Sidebar
@@ -56,7 +58,8 @@ with tab_chat:
                 decision = router.invoke({"input": msg, "chat_history": history.messages})
             reply = st.write_stream(reply_chain.stream(decision))
             m = {"role": "assistant", "content": reply, "route": decision["route"],
-                 "reasons": decision["reasons"], "signals": decision["signals"]}
+                 "reasons": decision["reasons"], "signals": decision["signals"],
+                 "pii_masked_count": decision.get("pii_masked_count", 0)}
             why(m)
         history.add_user_message(msg)
         history.add_ai_message(reply)
@@ -112,7 +115,7 @@ with tab_how:
 with st.sidebar:
     if ss.messages:
         last = [m for m in ss.messages if m["role"] == "user"][-1]["content"]
-        oid = order_id_from({"input": last, "chat_history": get_history(ss.sid).messages})
+        oid = order_id_from({"_raw_input": last, "chat_history": get_history(ss.sid).messages})
         if oid and get_order(oid):
             o, c = get_order(oid), get_customer(oid)
             st.divider()
